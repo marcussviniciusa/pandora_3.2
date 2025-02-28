@@ -16,19 +16,24 @@ export const AuthProvider = ({ children }) => {
 
   // Load user on mount or token change
   useEffect(() => {
-    const loadUser = async () => {
-      if (token) {
-        try {
-          const userData = await authService.getCurrentUser();
-          setUser(userData);
-        } catch (error) {
-          console.error('Error loading user:', error);
-          // If the token is invalid, clear it
-          localStorage.removeItem('token');
-          setToken(null);
-        }
-      }
+    // Skip loading user if no token exists
+    if (!token) {
       setLoading(false);
+      return;
+    }
+    
+    const loadUser = async () => {
+      try {
+        const userData = await authService.getCurrentUser();
+        setUser(userData);
+      } catch (error) {
+        console.error('Error loading user:', error);
+        // If the token is invalid, clear it
+        localStorage.removeItem('token');
+        setToken(null);
+      } finally {
+        setLoading(false);
+      }
     };
 
     loadUser();
@@ -42,7 +47,19 @@ export const AuthProvider = ({ children }) => {
   const login = async (username, password) => {
     try {
       const response = await authService.login(username, password);
-      const { token: newToken, user: userData } = response.data.data;
+      
+      // Adaptação para diferentes formatos de resposta (API real ou mock)
+      let userData, newToken;
+      
+      if (response.data.data) {
+        // Formato de resposta da API
+        userData = response.data.data.user;
+        newToken = response.data.data.token;
+      } else {
+        // Formato de resposta do mock no authService.js
+        userData = response.data.user;
+        newToken = response.data.token;
+      }
       
       // Save token to localStorage
       localStorage.setItem('token', newToken);
@@ -64,53 +81,30 @@ export const AuthProvider = ({ children }) => {
     try {
       await authService.logout();
     } catch (error) {
-      console.error('Error during logout:', error);
+      console.error('Logout error:', error);
     } finally {
       // Clear token and user state
       localStorage.removeItem('token');
       setToken(null);
       setUser(null);
-      toast.success('Logout realizado com sucesso');
     }
   };
 
   /**
    * Update user profile
-   * @param {Object} profileData - Profile data to update
+   * @param {Object} profileData - User profile data
    */
   const updateProfile = async (profileData) => {
     try {
       const updatedUser = await authService.updateProfile(profileData);
       setUser(updatedUser);
-      toast.success('Perfil atualizado com sucesso');
       return updatedUser;
     } catch (error) {
-      toast.error('Erro ao atualizar perfil');
       throw error;
     }
   };
 
-  /**
-   * Change user password
-   * @param {string} currentPassword - Current password
-   * @param {string} newPassword - New password
-   */
-  const changePassword = async (currentPassword, newPassword) => {
-    try {
-      await authService.changePassword(currentPassword, newPassword);
-      toast.success('Senha alterada com sucesso');
-    } catch (error) {
-      toast.error('Erro ao alterar senha');
-      throw error;
-    }
-  };
-
-  // Check if user has a specific role
-  const hasRole = (role) => {
-    return user?.roles?.includes(role) || false;
-  };
-
-  // Context value to be provided to consumers
+  // Context value
   const value = {
     user,
     token,
@@ -118,10 +112,12 @@ export const AuthProvider = ({ children }) => {
     login,
     logout,
     updateProfile,
-    changePassword,
-    hasRole,
-    isAuthenticated: !!user,
+    isAuthenticated: !!token
   };
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
 };

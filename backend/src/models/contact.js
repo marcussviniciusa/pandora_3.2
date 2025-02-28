@@ -56,19 +56,7 @@ module.exports = (sequelize, DataTypes) => {
     }
   }, {
     tableName: 'contacts',
-    timestamps: true,
-    indexes: [
-      {
-        fields: ['accountId']
-      },
-      {
-        fields: ['platform', 'contactId']
-      },
-      {
-        fields: ['name'],
-        type: 'FULLTEXT'
-      }
-    ]
+    timestamps: true
   });
 
   return Contact;

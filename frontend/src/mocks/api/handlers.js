@@ -39,7 +39,47 @@ const withApiMiddleware = async (req, res, ctx) => {
   return null;
 };
 
+/**
+ * API Handlers
+ */
 export const handlers = [
+  // Login
+  rest.post(`${API_URL}/auth/login`, async (req, res, ctx) => {
+    const errorResponse = await withApiMiddleware(req, res, ctx);
+    if (errorResponse) return errorResponse;
+    
+    const { username, password } = req.body;
+    
+    if (username === 'admin' && password === 'admin') {
+      return res(
+        ctx.status(200),
+        ctx.json({
+          success: true,
+          message: 'Login successful',
+          data: {
+            token: 'mock-jwt-token-for-development-only',
+            user: {
+              id: 1,
+              name: 'Admin User',
+              email: 'admin@pandora.com',
+              role: 'admin',
+              createdAt: new Date().toISOString()
+            }
+          }
+        })
+      );
+    }
+    
+    return res(
+      ctx.status(401),
+      ctx.json({
+        success: false,
+        message: 'Invalid credentials',
+        timestamp: new Date().toISOString()
+      })
+    );
+  }),
+
   // Dashboard Status
   rest.get(`${API_URL}/dashboard/status`, async (req, res, ctx) => {
     const errorResponse = await withApiMiddleware(req, res, ctx);

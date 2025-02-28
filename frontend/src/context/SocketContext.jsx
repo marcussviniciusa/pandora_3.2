@@ -80,214 +80,170 @@ export const SocketProvider = ({ children, socket }) => {
   };
   
   // Use real socket or mock socket
-  const [activeSocket, setActiveSocket] = useState(socket || createMockSocket());
+  const [activeSocket, setActiveSocket] = useState(null);
   
+  // Initialize socket - only run once or when token changes
   useEffect(() => {
-    let newSocket = null;
-
-    // Don't create a real socket in development mode unless specifically requested
-    if (import.meta.env.DEV && !import.meta.env.VITE_USE_REAL_SOCKET) {
+    // Bail if no token or if running in dev without VITE_USE_REAL_SOCKET
+    if ((!token && !import.meta.env.DEV) || (import.meta.env.DEV && !import.meta.env.VITE_USE_REAL_SOCKET && !activeSocket)) {
       const mockSocket = createMockSocket();
-      if (mockSocket) {
+      if (mockSocket && !activeSocket) {
         setActiveSocket(mockSocket);
         setConnected(true);
       }
       return;
     }
     
-    // If a socket was provided as a prop, use it
-    if (socket && socket !== activeSocket) {
-      setActiveSocket(socket);
+    // If a socket was provided as a prop or we already have an active socket, don't create a new one
+    if (socket || activeSocket) {
+      if (socket && socket !== activeSocket) {
+        setActiveSocket(socket);
+      }
       return;
     }
     
     // Otherwise create a new socket
-    if (!activeSocket && !import.meta.env.DEV) {
-      try {
-        const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3000';
-        
-        newSocket = io(socketUrl, {
-          auth: {
-            token: token
-          },
-          reconnectionAttempts: 5,
-          reconnectionDelay: 1000,
-          timeout: 10000
-        });
-        
-        setActiveSocket(newSocket);
-      } catch (error) {
-        console.error('Failed to create socket connection:', error);
-        setConnectionError(error.message);
-        return;
-      }
-    }
-    
-    const socketToUse = newSocket || activeSocket;
-    if (!socketToUse) return;
-    
-    // Connection events
-    const onConnect = () => {
-      console.log('Socket connected');
-      setConnected(true);
-      setConnectionError(null);
-      setReconnectAttempts(0);
-    };
-    
-    const onDisconnect = (reason) => {
-      console.log('Socket disconnected:', reason);
-      setConnected(false);
-    };
-    
-    const onError = (error) => {
-      console.error('Socket error:', error);
-      setConnectionError(error.message || 'Connection error');
-      toast.error('Erro de conexão com o servidor');
-    };
-    
-    const onReconnectAttempt = (attempt) => {
-      console.log(`Socket reconnect attempt: ${attempt}`);
-      setReconnectAttempts(attempt);
-    };
-    
-    const onReconnectFailed = () => {
-      console.log('Socket reconnect failed');
-      setConnectionError('Failed to reconnect after multiple attempts');
-      toast.error('Não foi possível reconectar ao servidor após várias tentativas');
-    };
-    
-    // Register event handlers
-    socketToUse.on('connect', onConnect);
-    socketToUse.on('disconnect', onDisconnect);
-    socketToUse.on('error', onError);
-    socketToUse.on('connect_error', onError);
-    socketToUse.on('reconnect_attempt', onReconnectAttempt);
-    socketToUse.on('reconnect_failed', onReconnectFailed);
-    
-    // Clean up event listeners
-    return () => {
-      if (socketToUse) {
-        socketToUse.off('connect', onConnect);
-        socketToUse.off('disconnect', onDisconnect);
-        socketToUse.off('error', onError);
-        socketToUse.off('connect_error', onError);
-        socketToUse.off('reconnect_attempt', onReconnectAttempt);
-        socketToUse.off('reconnect_failed', onReconnectFailed);
-        
-        // Only close if we created this socket
-        if (newSocket) {
-          socketToUse.disconnect();
-        }
-      }
-    };
-  }, [token, socket, activeSocket]);
-
-  useEffect(() => {
-    let socketInstance = null;
-
-    // Only create socket connection if user is authenticated
-    if (user && token) {
+    try {
       const socketUrl = import.meta.env.VITE_SOCKET_URL || 'http://localhost:3000';
       
-      // Create socket instance
-      socketInstance = io(socketUrl, {
+      const newSocket = io(socketUrl, {
         auth: {
-          token,
+          token: token
         },
         reconnectionAttempts: 5,
         reconnectionDelay: 1000,
-        reconnectionDelayMax: 5000,
-        transports: ['websocket'],
-      });
-
-      // Socket connection events
-      socketInstance.on(SOCKET_EVENTS.CONNECT, () => {
-        console.log('Socket connected');
-        setConnected(true);
-        
-        // Start ping for latency measurement
-        startPingInterval(socketInstance);
-      });
-
-      socketInstance.on(SOCKET_EVENTS.DISCONNECT, (reason) => {
-        console.log('Socket disconnected:', reason);
-        setConnected(false);
-        
-        if (reason === 'io server disconnect') {
-          // The server has forcefully disconnected the socket
-          toast.error('Desconectado do servidor. Reconectando...');
-        }
-      });
-
-      socketInstance.on(SOCKET_EVENTS.CONNECTION_ERROR, (error) => {
-        console.error('Socket connection error:', error);
-        toast.error('Erro de conexão com o servidor em tempo real');
+        timeout: 10000
       });
       
-      // WhatsApp events
-      socketInstance.on(SOCKET_EVENTS.ACCOUNT_QR_CODE, (data) => {
-        if (data.platform === 'whatsapp') {
-          toast.success(`QR Code disponível para ${data.phoneNumber}`);
-        }
-      });
-      
-      socketInstance.on(SOCKET_EVENTS.ACCOUNT_CONNECTED, (data) => {
-        if (data.platform === 'whatsapp') {
-          toast.success(`WhatsApp conectado: ${data.phoneNumber}`);
-        } else if (data.platform === 'instagram') {
-          toast.success(`Instagram conectado: ${data.username}`);
-        }
-      });
-      
-      socketInstance.on(SOCKET_EVENTS.ACCOUNT_DISCONNECTED, (data) => {
-        if (data.platform === 'whatsapp') {
-          toast.error(`WhatsApp desconectado: ${data.phoneNumber}`);
-        } else if (data.platform === 'instagram') {
-          toast.error(`Instagram desconectado: ${data.username}`);
-        }
-      });
-      
-      // New message event
-      socketInstance.on(SOCKET_EVENTS.NEW_MESSAGE, (data) => {
-        const platform = data.platform === 'whatsapp' ? 'WhatsApp' : 'Instagram';
-        toast(`Nova mensagem de ${data.sender || 'Desconhecido'} (${platform})`, {
-          icon: '📨',
-        });
-      });
-
-      setActiveSocket(socketInstance);
+      setActiveSocket(newSocket);
+    } catch (error) {
+      console.error('Failed to create socket connection:', error);
+      setConnectionError(error.message);
     }
-
-    // Cleanup on unmount
+    
+    // Clean up function
     return () => {
-      if (socketInstance) {
-        socketInstance.disconnect();
+      if (activeSocket && typeof activeSocket.disconnect === 'function') {
+        activeSocket.disconnect();
       }
     };
-  }, [user, token]);
+  }, [token, socket]); // Only run when token or socket props change
 
-  // Function to measure socket latency
-  const startPingInterval = (socketInstance) => {
-    const pingInterval = setInterval(() => {
-      if (!socketInstance || !socketInstance.connected) {
-        clearInterval(pingInterval);
-        return;
-      }
-      
-      const start = Date.now();
-      
-      socketInstance.emit(SOCKET_EVENTS.PING, null, () => {
-        const latency = Date.now() - start;
-        console.log('Socket latency:', latency);
+  // Setup socket event listeners
+  useEffect(() => {
+    if (!activeSocket) return;
+
+    // Connection event handlers
+    const onConnect = () => {
+      setConnected(true);
+      setConnectionError(null);
+      setReconnectAttempts(0);
+      console.log('Socket connected:', activeSocket.id);
+    };
+
+    const onDisconnect = (reason) => {
+      setConnected(false);
+      console.log('Socket disconnected:', reason);
+    };
+
+    const onConnectError = (error) => {
+      setConnectionError(error.message);
+      console.error('Socket connection error:', error);
+    };
+
+    const onReconnectAttempt = (attempt) => {
+      setReconnectAttempts(attempt);
+      console.log(`Socket reconnect attempt ${attempt}`);
+    };
+
+    const onReconnectFailed = () => {
+      setConnectionError('Failed to reconnect after maximum attempts');
+      console.error('Socket reconnection failed');
+      toast.error('Não foi possível reconectar ao servidor');
+    };
+
+    // Business event handlers
+    const onNewMessage = (data) => {
+      console.log('New message received:', data);
+      toast.custom((t) => (
+        <div className={`${t.visible ? 'animate-enter' : 'animate-leave'} max-w-md w-full bg-white shadow-lg rounded-lg pointer-events-auto flex ring-1 ring-black ring-opacity-5`}>
+          <div className="flex-1 w-0 p-4">
+            <div className="flex items-start">
+              <div className="flex-shrink-0 pt-0.5">
+                <img className="h-10 w-10 rounded-full" src={data.sender.avatar || '/placeholders/user.png'} alt="" />
+              </div>
+              <div className="ml-3 flex-1">
+                <p className="text-sm font-medium text-gray-900">{data.sender.name}</p>
+                <p className="mt-1 text-sm text-gray-500">{data.content.substring(0, 60)}{data.content.length > 60 ? '...' : ''}</p>
+              </div>
+            </div>
+          </div>
+          <div className="flex border-l border-gray-200">
+            <button onClick={() => toast.dismiss(t.id)} className="w-full border border-transparent rounded-none rounded-r-lg p-4 flex items-center justify-center text-sm font-medium text-indigo-600 hover:text-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+              Ver
+            </button>
+          </div>
+        </div>
+      ));
+    };
+
+    const onSystemNotification = (data) => {
+      console.log('System notification received:', data);
+      toast(data.message, {
+        icon: data.type === 'error' ? '🔴' : data.type === 'warning' ? '🟠' : '🔵',
       });
-    }, 5000); // Ping every 5 seconds
+    };
+
+    const onStatusChange = (data) => {
+      console.log('Status change notification:', data);
+      // Show UI notification or update UI elements
+    };
+
+    // Register event handlers
+    activeSocket.on('connect', onConnect);
+    activeSocket.on('disconnect', onDisconnect);
+    activeSocket.on('connect_error', onConnectError);
+    activeSocket.on('reconnect_attempt', onReconnectAttempt);
+    activeSocket.on('reconnect_failed', onReconnectFailed);
     
-    // Clean up interval on unmount
-    return () => clearInterval(pingInterval);
+    // Business events
+    activeSocket.on(SOCKET_EVENTS.NEW_MESSAGE, onNewMessage);
+    activeSocket.on(SOCKET_EVENTS.SYSTEM_NOTIFICATION, onSystemNotification);
+    activeSocket.on(SOCKET_EVENTS.STATUS_CHANGE, onStatusChange);
+
+    // Auto connect for mock socket in dev mode
+    if (import.meta.env.DEV && !import.meta.env.VITE_USE_REAL_SOCKET && activeSocket._simulateEvent) {
+      setTimeout(() => {
+        onConnect();
+      }, 100);
+    }
+
+    // Cleanup function for event listeners
+    return () => {
+      if (activeSocket) {
+        activeSocket.off('connect', onConnect);
+        activeSocket.off('disconnect', onDisconnect);
+        activeSocket.off('connect_error', onConnectError);
+        activeSocket.off('reconnect_attempt', onReconnectAttempt);
+        activeSocket.off('reconnect_failed', onReconnectFailed);
+        
+        activeSocket.off(SOCKET_EVENTS.NEW_MESSAGE, onNewMessage);
+        activeSocket.off(SOCKET_EVENTS.SYSTEM_NOTIFICATION, onSystemNotification);
+        activeSocket.off(SOCKET_EVENTS.STATUS_CHANGE, onStatusChange);
+      }
+    };
+  }, [activeSocket]); // Only re-run when activeSocket changes
+
+  // Expose socket and connection state
+  const value = {
+    socket: activeSocket,
+    connected,
+    connectionError,
+    reconnectAttempts,
   };
 
   return (
-    <SocketContext.Provider value={{ socket: activeSocket, connected, reconnectAttempts, connectionError }}>
+    <SocketContext.Provider value={value}>
       {children}
     </SocketContext.Provider>
   );
@@ -298,7 +254,7 @@ export const SocketProvider = ({ children, socket }) => {
  */
 export const useSocket = () => {
   const context = useContext(SocketContext);
-  if (context === undefined) {
+  if (!context) {
     throw new Error('useSocket must be used within a SocketProvider');
   }
   return context;

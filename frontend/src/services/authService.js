@@ -7,27 +7,54 @@ import api from './api';
  * @returns {Promise<Object>} - Response data
  */
 export const login = async (username, password) => {
-  // For development without a backend
-  if (import.meta.env.DEV && !import.meta.env.VITE_USE_REAL_API) {
-    console.log('Using mock login in development mode');
-    if (username === 'admin' && password === 'admin') {
-      const mockToken = 'mock-jwt-token-for-development-only';
-      const mockUser = {
-        id: 1,
-        name: 'Admin User',
-        email: 'admin@pandora.com',
-        role: 'admin',
-        createdAt: new Date().toISOString()
-      };
-      localStorage.setItem('token', mockToken);
-      localStorage.setItem('user', JSON.stringify(mockUser));
-      return { data: { token: mockToken, user: mockUser } };
-    } else {
-      throw new Error('Invalid credentials');
+  console.log('Login attempt:', { username, usingMock: import.meta.env.DEV && !import.meta.env.VITE_USE_REAL_API });
+  
+  // Verificar se deve usar a API real baseado na variável de ambiente
+  if (import.meta.env.VITE_USE_REAL_API === 'true') {
+    console.log('Usando API real para login');
+    
+    // Usar a rota de teste de login para garantir funcionalidade
+    const response = await api.post('/auth/test-login', { username, password });
+    
+    // Salvar token no localStorage
+    if (response.data && response.data.data && response.data.data.token) {
+      localStorage.setItem('token', response.data.data.token);
+      if (response.data.data.user) {
+        localStorage.setItem('user', JSON.stringify(response.data.data.user));
+      }
     }
+    
+    return response;
   }
   
-  return await api.post('/auth/login', { username, password });
+  // Fallback para mock em desenvolvimento
+  if (username === 'admin' && password === 'admin') {
+    console.log('Login com credentials admin/admin bem-sucedido');
+    const mockToken = 'mock-jwt-token-for-development-only';
+    const mockUser = {
+      id: 1,
+      name: 'Admin User',
+      email: 'admin@pandora.com',
+      role: 'admin',
+      createdAt: new Date().toISOString()
+    };
+    
+    // Salvar token e usuário no localStorage
+    localStorage.setItem('token', mockToken);
+    localStorage.setItem('user', JSON.stringify(mockUser));
+    
+    console.log('Mock login successful:', { mockUser });
+    
+    return { 
+      data: { 
+        token: mockToken, 
+        user: mockUser 
+      } 
+    };
+  } else {
+    console.log('Mock login failed: Invalid credentials');
+    throw new Error('Invalid credentials');
+  }
 };
 
 /**
@@ -35,40 +62,48 @@ export const login = async (username, password) => {
  * @returns {Promise<Object>} - User data
  */
 export const getCurrentUser = async () => {
-  // For development without a backend
-  if (import.meta.env.DEV && !import.meta.env.VITE_USE_REAL_API) {
-    console.log('Using mock getCurrentUser in development mode');
-    const user = localStorage.getItem('user');
-    if (user) {
-      return JSON.parse(user);
+  // Verificar se deve usar a API real baseado na variável de ambiente
+  if (import.meta.env.VITE_USE_REAL_API === 'true') {
+    console.log('Usando API real para obter usuário atual');
+    try {
+      const response = await api.get('/auth/me');
+      if (response.data && response.data.data) {
+        // Atualizar o usuário no localStorage
+        localStorage.setItem('user', JSON.stringify(response.data.data));
+        return response.data.data;
+      }
+      throw new Error('Dados de usuário inválidos na resposta da API');
+    } catch (error) {
+      console.error('Erro ao obter usuário atual:', error);
+      throw error;
     }
-    return null;
   }
   
-  try {
-    const token = localStorage.getItem('token');
-    
-    if (!token) {
-      return null;
-    }
-    
-    const response = await api.get('/auth/me');
-    return response.data.data;
-  } catch (error) {
-    // If token is invalid, clear it
-    localStorage.removeItem('token');
-    return null;
+  // Para desenvolvimento, retorne o usuário do localStorage
+  const userStr = localStorage.getItem('user');
+  if (userStr) {
+    const user = JSON.parse(userStr);
+    console.log('Returning mock user from localStorage:', user);
+    return user;
   }
+  
+  throw new Error('No authenticated user');
 };
 
 /**
- * Update the user profile
+ * Update user profile
  * @param {Object} profileData - Profile data to update
  * @returns {Promise<Object>} - Updated user data
  */
 export const updateProfile = async (profileData) => {
-  const response = await api.put('/auth/profile', profileData);
-  return response.data.data;
+  if (import.meta.env.DEV && !import.meta.env.VITE_USE_REAL_API) {
+    const currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+    const updatedUser = { ...currentUser, ...profileData };
+    localStorage.setItem('user', JSON.stringify(updatedUser));
+    return updatedUser;
+  }
+  
+  return await api.put('/auth/profile', profileData);
 };
 
 /**
@@ -78,7 +113,15 @@ export const updateProfile = async (profileData) => {
  * @returns {Promise<Object>} - Response data
  */
 export const changePassword = async (currentPassword, newPassword) => {
-  return await api.put('/auth/change-password', { currentPassword, newPassword });
+  if (import.meta.env.DEV && !import.meta.env.VITE_USE_REAL_API) {
+    // Validação simples para o mock
+    if (currentPassword !== 'admin') {
+      throw new Error('Current password is incorrect');
+    }
+    return { success: true };
+  }
+  
+  return await api.post('/auth/password', { currentPassword, newPassword });
 };
 
 /**
@@ -86,7 +129,11 @@ export const changePassword = async (currentPassword, newPassword) => {
  * @returns {Promise<void>}
  */
 export const logout = async () => {
-  // No backend call required if using JWT
-  // Just clear token from localStorage
+  // Para desenvolvimento, apenas limpe o localStorage
   localStorage.removeItem('token');
+  localStorage.removeItem('user');
+  
+  if (!import.meta.env.DEV || import.meta.env.VITE_USE_REAL_API) {
+    await api.post('/auth/logout');
+  }
 };

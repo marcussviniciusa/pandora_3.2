@@ -1,3 +1,5 @@
+const { Op } = require('sequelize');
+
 module.exports = (sequelize, DataTypes) => {
   const Conversation = sequelize.define('conversation', {
     id: {
@@ -58,27 +60,7 @@ module.exports = (sequelize, DataTypes) => {
     }
   }, {
     tableName: 'conversations',
-    timestamps: true,
-    indexes: [
-      {
-        fields: ['accountId']
-      },
-      {
-        fields: ['platform', 'participantId']
-      },
-      {
-        fields: ['platform', 'threadId'],
-        where: {
-          threadId: { [sequelize.Op.ne]: null }
-        }
-      },
-      {
-        fields: ['lastMessageAt']
-      },
-      {
-        fields: ['isArchived']
-      }
-    ]
+    timestamps: true
   });
 
   return Conversation;

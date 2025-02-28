@@ -78,25 +78,7 @@ module.exports = (sequelize, DataTypes) => {
     }
   }, {
     tableName: 'messages',
-    timestamps: true,
-    indexes: [
-      {
-        fields: ['accountId']
-      },
-      {
-        fields: ['conversationId']
-      },
-      {
-        fields: ['platform', 'messageId'],
-        unique: true
-      },
-      {
-        fields: ['from', 'to']
-      },
-      {
-        fields: ['timestamp']
-      }
-    ]
+    timestamps: true
   });
 
   return Message;

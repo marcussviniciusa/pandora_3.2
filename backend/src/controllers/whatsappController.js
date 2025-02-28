@@ -37,7 +37,14 @@ exports.getAccounts = async (req, res, next) => {
  */
 exports.createAccount = async (req, res, next) => {
   try {
-    const { phoneNumber } = req.body;
+    const { phoneNumber, name } = req.body;
+    
+    if (!phoneNumber) {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Phone number is required'
+      });
+    }
     
     // Check if account already exists
     const existingAccount = await AccountModel.findOne({
@@ -51,20 +58,30 @@ exports.createAccount = async (req, res, next) => {
     if (existingAccount) {
       return res.status(400).json({
         status: 'error',
-        message: `WhatsApp account with phone number ${phoneNumber} already exists`
+        message: 'A WhatsApp account with this phone number already exists'
       });
     }
     
-    // Create new account
-    const account = await whatsappService.createAccount(phoneNumber);
+    // Create account
+    const account = await AccountModel.create({
+      platform: 'whatsapp',
+      phoneNumber,
+      name: name || `WhatsApp ${phoneNumber}`,
+      status: 'INITIALIZING',
+      active: true,
+      lastActivity: new Date()
+    });
     
-    // Return account without sensitive data
-    const { password, ...accountData } = account.toJSON();
+    // Initialize WhatsApp client for this account
+    setTimeout(() => {
+      whatsappService.initializeClient(account.id, account.phoneNumber)
+        .catch(err => logger.error(`Failed to initialize client for new account ${account.id}:`, err));
+    }, 100); // Small delay to allow response to be sent first
     
     res.status(201).json({
       status: 'success',
-      message: 'WhatsApp account created successfully. Scan the QR code to connect.',
-      data: accountData
+      message: 'WhatsApp account created successfully',
+      data: account
     });
   } catch (error) {
     logger.error('Error creating WhatsApp account:', error);
@@ -85,7 +102,8 @@ exports.getAccountById = async (req, res, next) => {
     const account = await AccountModel.findOne({
       where: { 
         id,
-        platform: 'whatsapp' 
+        platform: 'whatsapp',
+        active: true
       },
       attributes: { exclude: ['password'] }
     });
@@ -97,9 +115,25 @@ exports.getAccountById = async (req, res, next) => {
       });
     }
     
+    // Get client instance if available
+    const client = whatsappService.getClient(id);
+    let connectionInfo = null;
+    
+    if (client && client.info) {
+      connectionInfo = {
+        connected: client.info && client.info.wid ? true : false,
+        phone: client.info.phone || account.phoneNumber,
+        name: client.info.pushname || account.name,
+        platform: client.info.platform || 'unknown'
+      };
+    }
+    
     res.status(200).json({
       status: 'success',
-      data: account
+      data: {
+        ...account.dataValues,
+        connectionInfo
+      }
     });
   } catch (error) {
     logger.error(`Error getting WhatsApp account ${req.params.id}:`, error);
@@ -133,8 +167,23 @@ exports.removeAccount = async (req, res, next) => {
       });
     }
     
-    // Remove account
-    await whatsappService.removeAccount(id);
+    // Destroy WhatsApp client if it exists
+    if (whatsappService.getClient(id)) {
+      await whatsappService.destroyClient(id);
+    }
+    
+    // Soft delete the account (mark as inactive)
+    await AccountModel.update(
+      { 
+        active: false,
+        status: 'REMOVED',
+        lastActivity: new Date()
+      },
+      { where: { id } }
+    );
+    
+    // Delete session data if exists
+    whatsappService.deleteSessionData(id);
     
     res.status(200).json({
       status: 'success',
@@ -160,9 +209,9 @@ exports.getStatus = async (req, res, next) => {
     const account = await AccountModel.findOne({
       where: { 
         id,
-        platform: 'whatsapp'
-      },
-      attributes: ['id', 'phoneNumber', 'status', 'lastActivity']
+        platform: 'whatsapp',
+        active: true
+      }
     });
     
     if (!account) {
@@ -172,24 +221,55 @@ exports.getStatus = async (req, res, next) => {
       });
     }
     
-    // Get current status from service
-    const status = await whatsappService.getStatus(id);
+    // Get client
+    const client = whatsappService.getClient(id);
     
-    // Update account status if changed
-    if (status !== account.status) {
-      account.status = status;
-      account.lastActivity = new Date();
-      await account.save();
+    // Default status info
+    let statusInfo = {
+      accountId: id,
+      phoneNumber: account.phoneNumber,
+      status: account.status,
+      lastActivity: account.lastActivity,
+      connected: false,
+      authStatus: 'unknown',
+      reconnectAttempts: whatsappService.reconnectAttempts.get(id) || 0,
+      qrAvailable: whatsappService.getCachedQRCode(id) ? true : false
+    };
+    
+    // Enhance with client info if available
+    if (client) {
+      try {
+        statusInfo.connected = client.info && client.info.wid ? true : false;
+        
+        // Add device info if available
+        if (client.info) {
+          statusInfo.deviceInfo = {
+            platform: client.info.platform || 'unknown',
+            phone: client.info.phone || account.phoneNumber,
+            wid: client.info.wid ? client.info.wid._serialized : null,
+          };
+        }
+        
+        // Get battery info if available and connected
+        if (statusInfo.connected && client.getBatteryStatus) {
+          try {
+            const battery = await client.getBatteryStatus();
+            statusInfo.battery = battery;
+          } catch (batteryError) {
+            logger.debug(`Could not get battery info for account ${id}:`, batteryError);
+          }
+        }
+        
+        // Get connection state
+        statusInfo.authStatus = client.authStrategy.state;
+      } catch (clientError) {
+        logger.error(`Error getting client info for account ${id}:`, clientError);
+      }
     }
     
     res.status(200).json({
       status: 'success',
-      data: {
-        id: account.id,
-        phoneNumber: account.phoneNumber,
-        status,
-        lastActivity: account.lastActivity
-      }
+      data: statusInfo
     });
   } catch (error) {
     logger.error(`Error getting WhatsApp status for account ${req.params.id}:`, error);
@@ -223,25 +303,39 @@ exports.reconnect = async (req, res, next) => {
       });
     }
     
-    // Get client
-    const client = whatsappService.getClient(id);
+    // Force state update
+    await AccountModel.update(
+      { 
+        status: 'RECONNECTING',
+        lastActivity: new Date()
+      },
+      { where: { id } }
+    );
     
-    if (!client) {
-      // Initialize client if it doesn't exist
+    res.status(200).json({
+      status: 'success',
+      message: 'Reconnection initiated',
+      data: {
+        accountId: id,
+        phoneNumber: account.phoneNumber,
+        status: 'RECONNECTING'
+      }
+    });
+    
+    // Perform reconnection after response sent
+    try {
+      // Reset reconnect attempts to allow full retry cycle
+      whatsappService.reconnectAttempts.set(id, 0);
+      
+      // Destroy any existing client
+      await whatsappService.destroyClient(id);
+      
+      // Initialize a new client
       await whatsappService.initializeClient(id, account.phoneNumber);
       
-      res.status(200).json({
-        status: 'success',
-        message: 'WhatsApp client initialization started'
-      });
-    } else {
-      // Handle reconnection for existing client
-      await whatsappService.handleReconnection(id, account.phoneNumber);
-      
-      res.status(200).json({
-        status: 'success',
-        message: 'WhatsApp reconnection initiated'
-      });
+      logger.info(`Reconnection initiated for WhatsApp account ${id}`);
+    } catch (error) {
+      logger.error(`Error during forced reconnection for account ${id}:`, error);
     }
   } catch (error) {
     logger.error(`Error reconnecting WhatsApp account ${req.params.id}:`, error);
@@ -415,28 +509,85 @@ exports.getQRCode = async (req, res, next) => {
       });
     }
     
-    // Return current status
-    // Note: QR codes are provided via websocket events, not directly through the API
-    res.status(200).json({
+    // Check if we have a cached QR code
+    const cachedQR = whatsappService.getCachedQRCode(id);
+    
+    if (cachedQR) {
+      return res.status(200).json({
+        status: 'success',
+        message: 'QR code available',
+        data: {
+          accountId: id,
+          phoneNumber: account.phoneNumber,
+          qrCode: cachedQR,
+          status: 'QR_READY',
+          expiresAt: Date.now() + 55000 // Approximate time remaining
+        }
+      });
+    }
+    
+    // If no QR available and account is already connected, return error
+    if (account.status === 'CONNECTED') {
+      return res.status(400).json({
+        status: 'error',
+        message: 'Account already connected, QR code not needed',
+        data: {
+          accountId: id,
+          phoneNumber: account.phoneNumber,
+          status: account.status
+        }
+      });
+    }
+    
+    // Update status to indicate QR is being generated
+    await AccountModel.update(
+      { 
+        status: 'INITIALIZING',
+        lastActivity: new Date()
+      },
+      { where: { id } }
+    );
+    
+    // Respond with current status
+    res.status(202).json({
       status: 'success',
-      message: 'QR code will be provided via WebSocket when available',
+      message: 'QR code generation initiated',
       data: {
-        id: account.id,
+        accountId: id,
         phoneNumber: account.phoneNumber,
-        status: account.status,
-        lastActivity: account.lastActivity
+        status: 'INITIALIZING',
+        qrAvailable: false,
+        // Important: Client should listen for WebSocket events to get the QR code
+        waitForWebSocket: true
       }
     });
     
-    // Force client to generate new QR code if client exists and not authenticated
-    if (account.status !== 'connected') {
-      const client = whatsappService.getClient(id);
-      
-      if (!client) {
-        // Initialize client if it doesn't exist
+    // Initialize or reinitialize the client to generate new QR code
+    setTimeout(async () => {
+      try {
+        // Reset reconnect attempts
+        whatsappService.reconnectAttempts.set(id, 0);
+        
+        // Destroy existing client if any
+        await whatsappService.destroyClient(id);
+        
+        // Initialize a new client
         await whatsappService.initializeClient(id, account.phoneNumber);
+        
+        logger.info(`QR code generation initiated for WhatsApp account ${id}`);
+      } catch (error) {
+        logger.error(`Error initiating QR code generation for account ${id}:`, error);
+        
+        // Update status to indicate error
+        await AccountModel.update(
+          { 
+            status: 'ERROR',
+            lastActivity: new Date()
+          },
+          { where: { id } }
+        );
       }
-    }
+    }, 100); // Small delay to allow response to be sent first
   } catch (error) {
     logger.error(`Error getting QR code for WhatsApp account ${req.params.id}:`, error);
     next(error);

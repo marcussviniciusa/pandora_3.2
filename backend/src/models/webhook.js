@@ -65,18 +65,7 @@ module.exports = (sequelize, DataTypes) => {
     }
   }, {
     tableName: 'webhooks',
-    timestamps: true,
-    indexes: [
-      {
-        fields: ['isActive']
-      },
-      {
-        fields: ['accountId']
-      },
-      {
-        fields: ['platform']
-      }
-    ]
+    timestamps: true
   });
 
   return Webhook;

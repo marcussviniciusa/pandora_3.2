@@ -80,28 +80,40 @@ const SystemStatus = () => {
     }
   };
 
+  // Loading state
   if (loading) {
     return (
-      <div className="bg-white shadow rounded-lg p-6">
-        <h3 className="text-base font-medium text-gray-900 mb-4">Status do Sistema</h3>
-        <div className="animate-pulse flex space-x-4">
-          <div className="flex-1 space-y-4 py-1">
-            <div className="h-4 bg-gray-200 rounded w-3/4"></div>
-            <div className="space-y-2">
-              <div className="h-4 bg-gray-200 rounded"></div>
-              <div className="h-4 bg-gray-200 rounded w-5/6"></div>
-            </div>
+      <div className="rounded-lg border border-gray-200 p-4 mt-4">
+        <div className="animate-pulse space-y-4">
+          <div className="h-4 bg-gray-200 rounded w-1/4"></div>
+          <div className="space-y-2">
+            <div className="h-4 bg-gray-200 rounded"></div>
+            <div className="h-4 bg-gray-200 rounded w-5/6"></div>
           </div>
         </div>
       </div>
     );
   }
-
+  
+  // Error state
   if (error) {
     return (
-      <div className="bg-white shadow rounded-lg p-6">
-        <h3 className="text-base font-medium text-gray-900 mb-4">Status do Sistema</h3>
-        <div className="text-red-500">{error}</div>
+      <div className="rounded-lg border border-red-200 bg-red-50 p-4 mt-4">
+        <div className="flex items-center">
+          <svg className="h-5 w-5 text-red-400 mr-2" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+          </svg>
+          <span className="font-medium text-red-800">{error}</span>
+        </div>
+      </div>
+    );
+  }
+  
+  // No data state
+  if (!systemStatus) {
+    return (
+      <div className="rounded-lg border border-gray-200 p-4 mt-4">
+        <p className="text-gray-500 text-center">Não há dados do sistema disponíveis</p>
       </div>
     );
   }
@@ -132,11 +144,11 @@ const SystemStatus = () => {
               <div className="flex-grow">
                 <div className="flex justify-between">
                   <span className="text-sm font-medium">WhatsApp</span>
-                  <span className={`text-xs ${getStatusBadge(systemStatus.whatsapp.status)}`}>
-                    {systemStatus.whatsapp.status === 'operational' ? 'Operacional' : 'Com problemas'}
+                  <span className={`text-xs ${systemStatus.whatsapp && getStatusBadge(systemStatus.whatsapp.status)}`}>
+                    {systemStatus.whatsapp && systemStatus.whatsapp.status === 'operational' ? 'Operacional' : 'Com problemas'}
                   </span>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">{systemStatus.whatsapp.message}</p>
+                <p className="text-xs text-gray-500 mt-1">{systemStatus.whatsapp && systemStatus.whatsapp.message}</p>
               </div>
             </div>
             
@@ -147,11 +159,11 @@ const SystemStatus = () => {
               <div className="flex-grow">
                 <div className="flex justify-between">
                   <span className="text-sm font-medium">Instagram</span>
-                  <span className={`text-xs ${getStatusBadge(systemStatus.instagram.status)}`}>
-                    {systemStatus.instagram.status === 'operational' ? 'Operacional' : 'Com problemas'}
+                  <span className={`text-xs ${systemStatus.instagram && getStatusBadge(systemStatus.instagram.status)}`}>
+                    {systemStatus.instagram && systemStatus.instagram.status === 'operational' ? 'Operacional' : 'Com problemas'}
                   </span>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">{systemStatus.instagram.message}</p>
+                <p className="text-xs text-gray-500 mt-1">{systemStatus.instagram && systemStatus.instagram.message}</p>
               </div>
             </div>
           </div>
@@ -167,11 +179,11 @@ const SystemStatus = () => {
               <div className="flex-grow">
                 <div className="flex justify-between">
                   <span className="text-sm font-medium">API</span>
-                  <span className={`text-xs ${getStatusBadge(systemStatus.api.status)}`}>
-                    {systemStatus.api.status === 'operational' ? 'Operacional' : 'Com problemas'}
+                  <span className={`text-xs ${systemStatus.api && getStatusBadge(systemStatus.api.status)}`}>
+                    {systemStatus.api && systemStatus.api.status === 'operational' ? 'Operacional' : 'Com problemas'}
                   </span>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">{systemStatus.api.message}</p>
+                <p className="text-xs text-gray-500 mt-1">{systemStatus.api && systemStatus.api.message}</p>
               </div>
             </div>
             
@@ -182,11 +194,11 @@ const SystemStatus = () => {
               <div className="flex-grow">
                 <div className="flex justify-between">
                   <span className="text-sm font-medium">Banco de Dados</span>
-                  <span className={`text-xs ${getStatusBadge(systemStatus.database.status)}`}>
-                    {systemStatus.database.status === 'operational' ? 'Operacional' : 'Com problemas'}
+                  <span className={`text-xs ${systemStatus.database && getStatusBadge(systemStatus.database.status)}`}>
+                    {systemStatus.database && systemStatus.database.status === 'operational' ? 'Operacional' : 'Com problemas'}
                   </span>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">{systemStatus.database.message}</p>
+                <p className="text-xs text-gray-500 mt-1">{systemStatus.database && systemStatus.database.message}</p>
               </div>
             </div>
           </div>

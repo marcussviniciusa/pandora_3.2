@@ -1,13 +1,20 @@
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { Client, LocalAuth, NoAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const logger = require('../utils/logger');
 const { MessageModel, AccountModel } = require('../models');
+const fs = require('fs');
+const path = require('path');
 
 class WhatsAppService {
   constructor() {
     this.clients = new Map(); // Map to store multiple WhatsApp client instances
     this.reconnectAttempts = new Map(); // Track reconnection attempts
-    this.MAX_RECONNECT_ATTEMPTS = 10;
+    this.qrCodes = new Map(); // Cache QR codes
+    this.qrExpiryTimers = new Map(); // Track QR code expiry timers
+    this.sessionHealthChecks = new Map(); // Track session health check intervals
+    this.MAX_RECONNECT_ATTEMPTS = 15; // Aumentado para maior tolerância
+    this.HEALTH_CHECK_INTERVAL = 60000; // Check session health every minute
+    this.SESSION_PATH = process.env.WHATSAPP_DATA_PATH || './whatsapp-sessions';
     this.io = null;
   }
 
@@ -19,6 +26,11 @@ class WhatsAppService {
     this.io = io;
     
     try {
+      // Ensure session directory exists
+      if (!fs.existsSync(this.SESSION_PATH)) {
+        fs.mkdirSync(this.SESSION_PATH, { recursive: true });
+      }
+      
       // Load all WhatsApp accounts from database
       const accounts = await AccountModel.findAll({ 
         where: { platform: 'whatsapp', active: true } 
@@ -43,11 +55,17 @@ class WhatsAppService {
    */
   async initializeClient(accountId, phoneNumber) {
     try {
+      // Check if there's already a client
+      if (this.clients.has(accountId)) {
+        logger.info(`Client already exists for account ${phoneNumber}, destroying old client`);
+        await this.destroyClient(accountId);
+      }
+      
       // Create a new client instance with LocalAuth strategy for better session persistence
       const client = new Client({
         authStrategy: new LocalAuth({
           clientId: accountId,
-          dataPath: process.env.WHATSAPP_DATA_PATH || './whatsapp-sessions'
+          dataPath: this.SESSION_PATH
         }),
         puppeteer: {
           headless: true,
@@ -58,11 +76,15 @@ class WhatsAppService {
             '--disable-accelerated-2d-canvas',
             '--no-first-run',
             '--no-zygote',
+            '--single-process', // Improvement: better stability in containers
             '--disable-gpu'
-          ]
+          ],
+          defaultViewport: null // Improvement: allow for automatic viewport sizing
         },
-        qrMaxRetries: 3,
-        restartOnAuthFail: true
+        qrMaxRetries: 5, // Increased from 3
+        restartOnAuthFail: true,
+        takeoverOnConflict: true, // Improvement: handle multi-device conflicts
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36' // Improvement: more stable user agent
       });
 
       // Reset reconnect attempts counter
@@ -73,15 +95,35 @@ class WhatsAppService {
         logger.info(`QR Code received for account ${phoneNumber}`);
         
         try {
+          // Clear any previous QR expiry timer
+          if (this.qrExpiryTimers.has(accountId)) {
+            clearTimeout(this.qrExpiryTimers.get(accountId));
+          }
+          
           // Generate QR code as data URL
           const qrDataURL = await qrcode.toDataURL(qr);
           
+          // Cache the QR code
+          this.qrCodes.set(accountId, qrDataURL);
+          
+          // Set expiry timer for QR code (typically 60 seconds)
+          const expiryTimer = setTimeout(() => {
+            this.qrCodes.delete(accountId);
+            this.io.emit('whatsapp:qr_expired', { accountId, phoneNumber });
+          }, 60000);
+          this.qrExpiryTimers.set(accountId, expiryTimer);
+          
           // Emit the QR code to the frontend
-          this.io.emit('whatsapp:qr', { accountId, phoneNumber, qrCode: qrDataURL });
+          this.io.emit('whatsapp:qr', { 
+            accountId, 
+            phoneNumber, 
+            qrCode: qrDataURL,
+            expiresAt: Date.now() + 60000 // 60 seconds from now
+          });
           
           // Update account status in database
           await AccountModel.update(
-            { status: 'qr_ready', lastActivity: new Date() },
+            { status: 'QR_READY', lastActivity: new Date() },
             { where: { id: accountId } }
           );
         } catch (error) {
@@ -93,9 +135,18 @@ class WhatsAppService {
       client.on('authenticated', async () => {
         logger.info(`WhatsApp client authenticated for account ${phoneNumber}`);
         
+        // Clear any QR expiry timer
+        if (this.qrExpiryTimers.has(accountId)) {
+          clearTimeout(this.qrExpiryTimers.get(accountId));
+          this.qrExpiryTimers.delete(accountId);
+        }
+        
+        // Clear cached QR code
+        this.qrCodes.delete(accountId);
+        
         // Update account status in database
         await AccountModel.update(
-          { status: 'authenticated', lastActivity: new Date() },
+          { status: 'AUTHENTICATED', lastActivity: new Date() },
           { where: { id: accountId } }
         );
         
@@ -108,7 +159,7 @@ class WhatsAppService {
         
         // Update account status in database
         await AccountModel.update(
-          { status: 'auth_failed', lastActivity: new Date() },
+          { status: 'AUTH_FAILED', lastActivity: new Date() },
           { where: { id: accountId } }
         );
         
@@ -124,7 +175,11 @@ class WhatsAppService {
         
         // Update account status in database
         await AccountModel.update(
-          { status: 'connected', lastActivity: new Date() },
+          { 
+            status: 'CONNECTED', 
+            lastActivity: new Date(),
+            lastConnection: new Date() 
+          },
           { where: { id: accountId } }
         );
         
@@ -132,6 +187,9 @@ class WhatsAppService {
         
         // Reset reconnect attempts on successful connection
         this.reconnectAttempts.set(accountId, 0);
+        
+        // Start health check for this session
+        this.startSessionHealthCheck(accountId, phoneNumber);
       });
 
       // Handle disconnection
@@ -140,11 +198,14 @@ class WhatsAppService {
         
         // Update account status in database
         await AccountModel.update(
-          { status: 'disconnected', lastActivity: new Date() },
+          { status: 'DISCONNECTED', lastActivity: new Date() },
           { where: { id: accountId } }
         );
         
         this.io.emit('whatsapp:disconnected', { accountId, phoneNumber, reason });
+        
+        // Stop health check
+        this.stopSessionHealthCheck(accountId);
         
         // Handle client reconnection
         await this.handleReconnection(accountId, phoneNumber);
@@ -176,12 +237,35 @@ class WhatsAppService {
             phoneNumber,
             message: savedMessage
           });
-          
-          // Send webhook notification if configured
-          // TODO: Implement webhook notifications
         } catch (error) {
           logger.error(`Error processing message for account ${phoneNumber}:`, error);
         }
+      });
+      
+      // Handle connection state changes
+      client.on('change_state', async (state) => {
+        logger.info(`State changed for account ${phoneNumber}: ${state}`);
+        
+        // Update account status in database if state is significant
+        if (['CONNECTED', 'OPENING', 'PAIRING', 'TIMEOUT'].includes(state)) {
+          await AccountModel.update(
+            { status: state, lastActivity: new Date() },
+            { where: { id: accountId } }
+          );
+          
+          this.io.emit('whatsapp:state_change', { accountId, phoneNumber, state });
+        }
+      });
+      
+      // Handle connection to phone event
+      client.on('change_battery', async (batteryInfo) => {
+        logger.info(`Battery info received for account ${phoneNumber}: Level ${batteryInfo.level}, Charging: ${batteryInfo.charging}`);
+        
+        this.io.emit('whatsapp:battery', { 
+          accountId, 
+          phoneNumber, 
+          battery: batteryInfo 
+        });
       });
 
       // Initialize the client
@@ -196,7 +280,7 @@ class WhatsAppService {
       
       // Update account status in database
       await AccountModel.update(
-        { status: 'error', lastActivity: new Date() },
+        { status: 'ERROR', lastActivity: new Date() },
         { where: { id: accountId } }
       );
       
@@ -226,7 +310,7 @@ class WhatsAppService {
         logger.error(`Max reconnection attempts reached for account ${phoneNumber}`);
         
         await AccountModel.update(
-          { status: 'reconnect_failed', lastActivity: new Date() },
+          { status: 'RECONNECT_FAILED', lastActivity: new Date() },
           { where: { id: accountId } }
         );
         
@@ -234,8 +318,10 @@ class WhatsAppService {
         return;
       }
       
-      // Calculate backoff delay using exponential backoff formula
-      const delay = Math.min(1000 * Math.pow(2, attempts), 300000); // max 5 minutes
+      // Calculate backoff delay using exponential backoff formula with jitter
+      const baseDelay = Math.min(1000 * Math.pow(2, attempts), 300000); // max 5 minutes
+      const jitter = Math.random() * 0.5 + 0.75; // 75% to 125% of baseDelay
+      const delay = Math.floor(baseDelay * jitter);
       
       logger.info(`Attempting to reconnect WhatsApp client for account ${phoneNumber} in ${delay}ms (attempt ${attempts + 1}/${this.MAX_RECONNECT_ATTEMPTS})`);
       
@@ -244,7 +330,7 @@ class WhatsAppService {
       
       // Update account status in database
       await AccountModel.update(
-        { status: 'reconnecting', lastActivity: new Date() },
+        { status: 'RECONNECTING', lastActivity: new Date() },
         { where: { id: accountId } }
       );
       
@@ -259,20 +345,99 @@ class WhatsAppService {
       await new Promise(resolve => setTimeout(resolve, delay));
       
       // Destroy old client if it exists
-      if (this.clients.has(accountId)) {
-        const oldClient = this.clients.get(accountId);
-        try {
-          await oldClient.destroy();
-        } catch (error) {
-          logger.error(`Error destroying old WhatsApp client for account ${phoneNumber}:`, error);
-        }
-        this.clients.delete(accountId);
-      }
+      await this.destroyClient(accountId);
       
       // Reinitialize the client
       await this.initializeClient(accountId, phoneNumber);
     } catch (error) {
       logger.error(`Error during reconnection for account ${phoneNumber}:`, error);
+    }
+  }
+  
+  /**
+   * Safely destroy a client
+   * @param {string} accountId - Account ID
+   */
+  async destroyClient(accountId) {
+    if (this.clients.has(accountId)) {
+      const client = this.clients.get(accountId);
+      try {
+        // Stop health check
+        this.stopSessionHealthCheck(accountId);
+        
+        // Clear QR expiry timer
+        if (this.qrExpiryTimers.has(accountId)) {
+          clearTimeout(this.qrExpiryTimers.get(accountId));
+          this.qrExpiryTimers.delete(accountId);
+        }
+        
+        // Destroy client
+        await client.destroy();
+        logger.info(`Destroyed WhatsApp client for account ${accountId}`);
+      } catch (error) {
+        logger.error(`Error destroying WhatsApp client for account ${accountId}:`, error);
+      }
+      this.clients.delete(accountId);
+    }
+  }
+  
+  /**
+   * Start session health check for an account
+   * @param {string} accountId - Account ID
+   * @param {string} phoneNumber - Phone number for reference
+   */
+  startSessionHealthCheck(accountId, phoneNumber) {
+    // Clear any existing health check
+    this.stopSessionHealthCheck(accountId);
+    
+    // Start new health check interval
+    const interval = setInterval(async () => {
+      try {
+        const client = this.getClient(accountId);
+        if (!client) {
+          logger.warn(`Health check failed: No client found for account ${phoneNumber}`);
+          this.stopSessionHealthCheck(accountId);
+          return;
+        }
+        
+        // Check if client is properly connected
+        const isConnected = client.info && 
+                           client.info.wid && 
+                           typeof client.info.wid._serialized === 'string';
+        
+        if (!isConnected) {
+          logger.warn(`Health check failed: Client not properly connected for account ${phoneNumber}`);
+          await this.handleReconnection(accountId, phoneNumber);
+          return;
+        }
+        
+        // Update last activity timestamp
+        await AccountModel.update(
+          { lastActivity: new Date() },
+          { where: { id: accountId } }
+        );
+        
+        logger.debug(`Health check passed for account ${phoneNumber}`);
+      } catch (error) {
+        logger.error(`Error during health check for account ${phoneNumber}:`, error);
+        await this.handleReconnection(accountId, phoneNumber);
+      }
+    }, this.HEALTH_CHECK_INTERVAL);
+    
+    // Store the interval reference
+    this.sessionHealthChecks.set(accountId, interval);
+    logger.info(`Started health check for account ${phoneNumber}`);
+  }
+  
+  /**
+   * Stop session health check for an account
+   * @param {string} accountId - Account ID
+   */
+  stopSessionHealthCheck(accountId) {
+    if (this.sessionHealthChecks.has(accountId)) {
+      clearInterval(this.sessionHealthChecks.get(accountId));
+      this.sessionHealthChecks.delete(accountId);
+      logger.info(`Stopped health check for account ${accountId}`);
     }
   }
 
@@ -283,6 +448,15 @@ class WhatsAppService {
    */
   getClient(accountId) {
     return this.clients.get(accountId) || null;
+  }
+  
+  /**
+   * Get cached QR code for an account
+   * @param {string} accountId - Account ID
+   * @returns {string|null} QR code data URL or null if not available
+   */
+  getCachedQRCode(accountId) {
+    return this.qrCodes.get(accountId) || null;
   }
 
   /**

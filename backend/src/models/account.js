@@ -1,3 +1,6 @@
+const Sequelize = require('sequelize');
+const { Op } = Sequelize;
+
 module.exports = (sequelize, DataTypes) => {
   const Account = sequelize.define('account', {
     id: {
@@ -40,35 +43,16 @@ module.exports = (sequelize, DataTypes) => {
     },
     lastActivity: {
       type: DataTypes.DATE,
-      defaultValue: DataTypes.NOW
+      allowNull: true
     },
     metadata: {
       type: DataTypes.JSONB,
+      allowNull: true,
       defaultValue: {}
     }
   }, {
-    tableName: 'accounts',
     timestamps: true,
-    paranoid: true, // Soft delete
-    indexes: [
-      {
-        fields: ['platform', 'active']
-      },
-      {
-        fields: ['platform', 'phoneNumber'],
-        unique: true,
-        where: {
-          phoneNumber: { [sequelize.Op.ne]: null }
-        }
-      },
-      {
-        fields: ['platform', 'username'],
-        unique: true,
-        where: {
-          username: { [sequelize.Op.ne]: null }
-        }
-      }
-    ]
+    paranoid: true // Soft delete
   });
 
   return Account;

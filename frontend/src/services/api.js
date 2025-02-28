@@ -55,4 +55,8 @@ api.interceptors.response.use(
   }
 );
 
+// Import and export individual services
+import dashboardService from './api/dashboardService';
+
+export { dashboardService };
 export default api;

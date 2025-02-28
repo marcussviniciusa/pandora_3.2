@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
-const { UserModel } = require('../models');
+const { UserModel, sequelize } = require('../models');
+const { Op } = require('sequelize');
 const logger = require('../utils/logger');
 
 /**
@@ -16,7 +17,7 @@ exports.register = async (req, res, next) => {
     // Check if user already exists
     const existingUser = await UserModel.findOne({
       where: {
-        [sequelize.Op.or]: [
+        [Op.or]: [
           { username },
           { email }
         ]
@@ -83,7 +84,7 @@ exports.login = async (req, res, next) => {
     // Check if user exists
     const user = await UserModel.findOne({
       where: {
-        [sequelize.Op.or]: [
+        [Op.or]: [
           { username },
           { email: username } // Allow login with email as username
         ],
@@ -183,7 +184,7 @@ exports.updateProfile = async (req, res, next) => {
       const existingUser = await UserModel.findOne({
         where: {
           email,
-          id: { [sequelize.Op.ne]: req.user.id }
+          id: { [Op.ne]: req.user.id }
         }
       });
       

@@ -7,6 +7,32 @@ const validate = require('../middlewares/validate');
 const router = express.Router();
 
 /**
+ * @route   GET /api/whatsapp/test
+ * @desc    Test WhatsApp connection (no auth required - testing only)
+ * @access  Public
+ */
+router.get('/test', (req, res) => {
+  res.status(200).json({
+    status: 'success',
+    message: 'WhatsApp routes are working correctly',
+    timestamp: new Date().toISOString()
+  });
+});
+
+/**
+ * @route   POST /api/whatsapp/test/account
+ * @desc    Create a test WhatsApp account (no auth required - testing only)
+ * @access  Public
+ */
+router.post('/test/account',
+  [
+    body('phoneNumber').isString().notEmpty().withMessage('Phone number is required')
+  ],
+  validate,
+  whatsappController.createAccount
+);
+
+/**
  * @route   GET /api/whatsapp/accounts
  * @desc    Get all WhatsApp accounts
  * @access  Private

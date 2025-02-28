@@ -1,8 +1,13 @@
 {
-  "css.validate": true,
-  "scss.validate": true,
-  "less.validate": true,
+  "css.validate": false,
+  "scss.validate": false, 
+  "less.validate": false,
+  "stylelint.validate": ["css", "scss"],
   "css.lint.unknownAtRules": "ignore",
+  "css.customData": [
+    "../.css-data.json",
+    "./.vscode/css_custom_data.json"
+  ],
   "editor.quickSuggestions": {
     "strings": true
   },
@@ -12,5 +17,11 @@
     "html": "html",
     "css": "css",
     "javascriptreact": "html"
+  },
+  "css.lint.validProperties": [
+    "composes"
+  ],
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
   }
 }

@@ -57,21 +57,7 @@ module.exports = (sequelize, DataTypes) => {
   }, {
     tableName: 'users',
     timestamps: true,
-    paranoid: true, // Soft delete
-    indexes: [
-      {
-        fields: ['username']
-      },
-      {
-        fields: ['email']
-      },
-      {
-        fields: ['role']
-      },
-      {
-        fields: ['isActive']
-      }
-    ]
+    paranoid: true // Soft delete
   });
 
   return User;

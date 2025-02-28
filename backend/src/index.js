@@ -71,6 +71,10 @@ server.listen(PORT, async () => {
     await sequelize.authenticate();
     logger.info('Database connection has been established successfully.');
     
+    // Sincronizar modelos com o banco de dados (recriar tabelas)
+    await sequelize.sync({ force: true });
+    logger.info('Database tables created successfully.');
+    
     // Initialize WhatsApp service
     await whatsappService.initialize(io);
     

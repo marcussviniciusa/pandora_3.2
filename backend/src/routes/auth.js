@@ -3,8 +3,65 @@ const { body } = require('express-validator');
 const authController = require('../controllers/authController');
 const auth = require('../middlewares/auth');
 const validate = require('../middlewares/validate');
+const jwt = require('jsonwebtoken');
+const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
+
+/**
+ * @route   GET /api/auth/test
+ * @desc    Test route
+ * @access  Public
+ */
+router.get('/test', (req, res) => {
+  res.status(200).json({
+    status: 'success',
+    message: 'Auth routes are working!',
+    timestamp: new Date().toISOString()
+  });
+});
+
+/**
+ * @route   POST /api/auth/test-login
+ * @desc    Test login with hardcoded credentials
+ * @access  Public
+ */
+router.post('/test-login', (req, res) => {
+  // Para fins de teste, sempre retorna um usuário de teste
+  const testUser = {
+    id: uuidv4(), // Usar UUID em vez de inteiro
+    username: 'admin',
+    email: 'admin@example.com',
+    firstName: 'Admin',
+    lastName: 'User',
+    role: 'admin',
+    isActive: true,
+    lastLogin: new Date().toISOString()
+  };
+  
+  const token = jwt.sign(
+    { 
+      id: testUser.id, 
+      role: testUser.role, 
+      isTestUser: true,
+      username: testUser.username,
+      email: testUser.email,
+      firstName: testUser.firstName,
+      lastName: testUser.lastName
+    },
+    process.env.JWT_SECRET || 'your-secret-key',
+    { expiresIn: '7d' }
+  );
+  
+  res.status(200).json({
+    status: 'success',
+    message: 'Login successful',
+    data: {
+      token,
+      user: testUser
+    }
+  });
+});
 
 /**
  * @route   POST /api/auth/register

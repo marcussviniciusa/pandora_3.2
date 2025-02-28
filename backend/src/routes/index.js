@@ -7,6 +7,7 @@ const conversationRoutes = require('./conversations');
 const contactRoutes = require('./contacts');
 const webhookRoutes = require('./webhooks');
 const userRoutes = require('./users');
+const dashboardRoutes = require('./dashboard');
 
 const router = express.Router();
 
@@ -28,5 +29,6 @@ router.use('/conversations', conversationRoutes);
 router.use('/contacts', contactRoutes);
 router.use('/webhooks', webhookRoutes);
 router.use('/users', userRoutes);
+router.use('/dashboard', dashboardRoutes);
 
 module.exports = router;
