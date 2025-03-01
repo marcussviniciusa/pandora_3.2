@@ -132,11 +132,13 @@ export const sendMessage = async (conversationId, text, platform) => {
       id: `msg-${conversationId}-${mockMessages.length + 1}`,
       conversationId,
       text,
+      body: text, // Add body field for WhatsApp compatibility
       from: conversation.accountId,
       fromType: 'account',
       timestamp: new Date().toISOString(),
       status: 'sent',
       read: true,
+      isFromMe: true, // Add this for proper UI display
       platform
     };
     
@@ -145,7 +147,9 @@ export const sendMessage = async (conversationId, text, platform) => {
     
     // Update conversation last message
     conversation.lastMessage = text;
+    conversation.lastMessagePreview = text;  // Support both formats
     conversation.lastMessageTimestamp = newMessage.timestamp;
+    conversation.lastMessageAt = newMessage.timestamp;  // Support both formats
     conversation.updatedAt = newMessage.timestamp;
     
     return Promise.resolve(newMessage);

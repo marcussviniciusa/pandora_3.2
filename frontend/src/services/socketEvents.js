@@ -24,7 +24,8 @@ export const SOCKET_EVENTS = {
   
   // WhatsApp events
   WHATSAPP_ACTIVITY: 'whatsapp_activity',
-  WHATSAPP_MESSAGE: 'whatsapp_message',
+  WHATSAPP_MESSAGE: 'whatsapp:message',
+  WHATSAPP_MESSAGE_SENT: 'whatsapp:message:sent',
   WHATSAPP_GROUP: 'whatsapp_group',
   
   // Account events

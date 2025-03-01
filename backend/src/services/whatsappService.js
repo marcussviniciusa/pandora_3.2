@@ -1,7 +1,7 @@
 const { Client, LocalAuth, NoAuth } = require('whatsapp-web.js');
 const qrcode = require('qrcode');
 const logger = require('../utils/logger');
-const { MessageModel, AccountModel } = require('../models');
+const { MessageModel, AccountModel, ConversationModel } = require('../models');
 const fs = require('fs');
 const path = require('path');
 
@@ -216,9 +216,18 @@ class WhatsAppService {
         try {
           logger.info(`Message received for account ${phoneNumber} from ${msg.from}`);
           
+          // Find or create conversation
+          const conversation = await this.findOrCreateConversation(
+            accountId,
+            msg.from,
+            msg.body,
+            msg.timestamp ? new Date(msg.timestamp * 1000) : new Date()
+          );
+          
           // Save message to database
           const savedMessage = await MessageModel.create({
             accountId,
+            conversationId: conversation?.id, // Link to conversation if exists
             platform: 'whatsapp',
             messageId: msg.id.id,
             from: msg.from,
@@ -235,7 +244,8 @@ class WhatsAppService {
           this.io.emit('whatsapp:message', {
             accountId,
             phoneNumber,
-            message: savedMessage
+            message: savedMessage,
+            conversation
           });
         } catch (error) {
           logger.error(`Error processing message for account ${phoneNumber}:`, error);
@@ -292,6 +302,55 @@ class WhatsAppService {
       
       // Try to reconnect
       await this.handleReconnection(accountId, phoneNumber);
+    }
+  }
+
+  /**
+   * Find or create a conversation for a WhatsApp message
+   * @param {string} accountId - Account ID
+   * @param {string} participantId - Participant ID (phone number)
+   * @param {string} messageBody - Message body for preview
+   * @param {Date} messageTimestamp - Message timestamp
+   * @returns {Promise<Object>} - Conversation object
+   */
+  async findOrCreateConversation(accountId, participantId, messageBody, messageTimestamp) {
+    try {
+      // Check if we should exclude this participant (e.g., status broadcasts)
+      if (participantId === 'status@broadcast') {
+        logger.info(`Skipping conversation creation for status broadcast message`);
+        return null;
+      }
+      
+      // Find existing conversation or create new one
+      const [conversation, created] = await ConversationModel.findOrCreate({
+        where: {
+          accountId,
+          platform: 'whatsapp',
+          participantId,
+        },
+        defaults: {
+          name: participantId.split('@')[0], // Use phone number as name initially
+          lastMessageAt: messageTimestamp,
+          lastMessagePreview: messageBody?.substring(0, 100) || '(Media message)',
+          unreadCount: 1,
+          isGroup: participantId.includes('g.us'),
+        }
+      });
+      
+      // If conversation exists, update it
+      if (!created) {
+        await conversation.update({
+          lastMessageAt: messageTimestamp,
+          lastMessagePreview: messageBody?.substring(0, 100) || '(Media message)',
+          unreadCount: conversation.unreadCount + 1,
+        });
+      }
+      
+      logger.info(`${created ? 'Created new' : 'Updated existing'} conversation for account ${accountId} with participant ${participantId}`);
+      return conversation;
+    } catch (error) {
+      logger.error(`Error in findOrCreateConversation for account ${accountId}:`, error);
+      return null;
     }
   }
 
@@ -480,9 +539,18 @@ class WhatsAppService {
       // Send the message
       const msg = await client.sendMessage(formattedNumber, message);
       
+      // Find or create conversation
+      const conversation = await this.findOrCreateConversation(
+        accountId,
+        formattedNumber,
+        message,
+        new Date()
+      );
+      
       // Save sent message to database
       const savedMessage = await MessageModel.create({
         accountId,
+        conversationId: conversation?.id,
         platform: 'whatsapp',
         messageId: msg.id.id,
         from: client.info.wid._serialized,
@@ -502,7 +570,8 @@ class WhatsAppService {
       this.io.emit('whatsapp:message:sent', {
         accountId,
         phoneNumber: account?.phoneNumber,
-        message: savedMessage
+        message: savedMessage,
+        conversation
       });
       
       return savedMessage;

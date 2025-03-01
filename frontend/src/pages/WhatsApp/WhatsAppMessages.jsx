@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import whatsappService from '../../services/whatsappService';
 import ConversationsContainer from '../../components/messages/ConversationsContainer';
 import Button from '../../components/ui/Button';
+import messagesService from '../../services/messagesService';
 
 /**
  * WhatsApp Messages page to display and interact with WhatsApp conversations
@@ -15,9 +16,26 @@ const WhatsAppMessages = () => {
   // Fetch WhatsApp accounts
   const { 
     data: accounts, 
-    isLoading, 
-    error 
+    isLoading: accountsLoading, 
+    error: accountsError 
   } = useQuery('whatsapp-accounts', whatsappService.getAccounts);
+
+  // Fetch conversations for the selected account
+  const {
+    data: conversations,
+    isLoading: conversationsLoading,
+    error: conversationsError
+  } = useQuery(
+    ['conversations', 'whatsapp', selectedAccountId],
+    () => messagesService.getConversations({ 
+      platform: 'whatsapp',
+      accountId: selectedAccountId 
+    }),
+    {
+      enabled: !!selectedAccountId,
+      refetchInterval: 10000, // Refetch every 10 seconds
+    }
+  );
 
   // Set first available account as selected on initial load
   useEffect(() => {
@@ -37,7 +55,7 @@ const WhatsAppMessages = () => {
   };
 
   // If accounts are loading, show loading indicator
-  if (isLoading) {
+  if (accountsLoading) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
@@ -46,7 +64,7 @@ const WhatsAppMessages = () => {
   }
 
   // If there's an error loading accounts, show error message
-  if (error) {
+  if (accountsError) {
     return (
       <div className="h-full flex items-center justify-center">
         <div className="text-center max-w-lg p-5">
@@ -54,7 +72,7 @@ const WhatsAppMessages = () => {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           <h3 className="text-lg font-medium text-gray-700 mb-2">Erro ao carregar contas</h3>
-          <p className="text-gray-500 mb-4">{error.message || 'Ocorreu um erro desconhecido ao carregar as contas do WhatsApp.'}</p>
+          <p className="text-gray-500 mb-4">{accountsError.message || 'Ocorreu um erro desconhecido ao carregar as contas do WhatsApp.'}</p>
           <Button
             variant="primary"
             onClick={() => window.location.reload()}
@@ -119,10 +137,43 @@ const WhatsAppMessages = () => {
       {/* Conversations container */}
       {selectedAccountId && (
         <div className="flex-1 overflow-hidden">
-          <ConversationsContainer
-            platform="whatsapp"
-            accountId={selectedAccountId}
-          />
+          {conversationsLoading ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center p-4">
+                <svg className="animate-spin h-10 w-10 mx-auto text-indigo-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <p className="mt-2 text-gray-600">Carregando conversas...</p>
+              </div>
+            </div>
+          ) : conversationsError ? (
+            <div className="flex items-center justify-center h-full">
+              <div className="text-center p-4 max-w-md">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12 mx-auto text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <h3 className="mt-2 text-lg font-medium text-gray-900">Erro ao carregar conversas</h3>
+                <p className="mt-1 text-sm text-gray-500">
+                  {conversationsError?.message || 'Ocorreu um erro ao carregar as conversas do WhatsApp.'}
+                </p>
+                <button
+                  className="mt-4 inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                  onClick={() => window.location.reload()}
+                >
+                  Tentar novamente
+                </button>
+              </div>
+            </div>
+          ) : (
+            <ConversationsContainer
+              platform="whatsapp"
+              accountId={selectedAccountId}
+              conversations={conversations}
+              isLoading={conversationsLoading}
+              error={conversationsError}
+            />
+          )}
         </div>
       )}
     </div>

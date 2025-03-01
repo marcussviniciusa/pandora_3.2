@@ -108,7 +108,10 @@ const ConversationView = ({
               }`}
             >
               <div className="flex flex-col">
-                <p className="break-all whitespace-pre-wrap">{message.text}</p>
+                <p className="break-all whitespace-pre-wrap">
+                  {/* Handle multiple possible message field formats */}
+                  {message.text || message.body || message.content || '(Mensagem sem conteúdo)'}
+                </p>
                 <span
                   className={`text-xs mt-1 self-end ${
                     message.isFromMe ? 'text-indigo-100' : 'text-gray-500'
